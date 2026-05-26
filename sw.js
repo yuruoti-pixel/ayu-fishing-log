@@ -1,4 +1,4 @@
-const CACHE_NAME = "ayu-fishing-log-v4";
+const CACHE_NAME = "ayu-fishing-log-v6";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,7 +7,8 @@ const ASSETS = [
   "./fields.json",
   "./options.json",
   "./manifest.webmanifest",
-  "./icon.svg"
+  "./icon-192.png",
+  "./icon-512.png"
 ];
 
 self.addEventListener("install", (event) => {

@@ -17,8 +17,29 @@ const typeLabels = {
   textarea: "長文メモ",
   select: "単一選択",
   multiselect: "複数選択",
-  checkbox: "チェック"
+  checkbox: "チェック",
+  combo: "候補＋直接入力"
 };
+
+const settingPages = {
+  fields: "入力項目の設定",
+  options: "選択肢の設定",
+  app: "バックアップ・初期化"
+};
+
+const comboFieldIds = new Set([
+  "fishingCoop",
+  "river",
+  "point",
+  "morning_rod",
+  "afternoon_rod",
+  "morning_underwaterLine",
+  "afternoon_underwaterLine",
+  "morning_hanakan",
+  "afternoon_hanakan",
+  "morning_hook",
+  "afternoon_hook"
+]);
 
 let templateFields = [];
 let templateOptions = {};
@@ -26,6 +47,8 @@ let db;
 let state;
 let editingId = null;
 let activeTab = { add: "common", edit: "common" };
+let settingPage = "top";
+let expandedFieldId = "";
 
 const views = document.querySelectorAll(".view");
 const navButtons = document.querySelectorAll(".nav-button");
@@ -49,7 +72,7 @@ async function loadInitialTemplates() {
 
 function makeDefaultState() {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     fields: structuredClone(templateFields),
     options: structuredClone(templateOptions),
     records: []
@@ -90,7 +113,7 @@ async function loadState() {
   const saved = await readStateFromDb();
   if (saved) {
     const merged = normalizeState(saved);
-    const changed = mergeNewTemplateItems(merged);
+    const changed = mergeNewTemplateItems(merged) || applySchemaRules(merged);
     if (changed) await writeStateToDb(merged);
     return merged;
   }
@@ -98,11 +121,13 @@ async function loadState() {
   const legacy = loadLegacyState();
   if (legacy) {
     mergeNewTemplateItems(legacy);
+    applySchemaRules(legacy);
     await writeStateToDb(legacy);
     return legacy;
   }
 
   const fallback = makeDefaultState();
+  applySchemaRules(fallback);
   await writeStateToDb(fallback);
   return fallback;
 }
@@ -119,7 +144,7 @@ function loadLegacyState() {
 function normalizeState(raw) {
   const fallback = makeDefaultState();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     fields: Array.isArray(raw.fields) ? raw.fields : fallback.fields,
     options: { ...fallback.options, ...(raw.options || {}) },
     records: Array.isArray(raw.records) ? raw.records.map(normalizeRecord) : []
@@ -144,24 +169,48 @@ function mergeNewTemplateItems(targetState) {
   return changed;
 }
 
-async function importNewTemplateItems() {
-  const before = state.fields.length + Object.keys(state.options).length;
-  mergeNewTemplateItems(state);
-  await saveState();
-  renderSettings();
-  buildForm(addForm, createEmptyRecord(), "add");
-  const after = state.fields.length + Object.keys(state.options).length;
-  showToast(after > before ? "新しい初期項目を取り込みました" : "追加できる新しい項目はありません");
-}
-
-async function resetSettingsToTemplates() {
-  if (!confirm("スマホで編集した項目や選択肢が初期状態に戻ります。実行しますか？")) return;
-  state.fields = structuredClone(templateFields);
-  state.options = structuredClone(templateOptions);
-  await saveState();
-  renderSettings();
-  buildForm(addForm, createEmptyRecord(), "add");
-  showToast("初期設定に戻しました");
+function applySchemaRules(targetState) {
+  let changed = false;
+  const defaultOptionKeys = {
+    fishingCoop: "fishingCoop",
+    river: "river",
+    point: "point",
+    morning_rod: "rod",
+    afternoon_rod: "rod",
+    morning_underwaterLine: "underwaterLine",
+    afternoon_underwaterLine: "underwaterLine",
+    morning_hanakan: "hanakan",
+    afternoon_hanakan: "hanakan",
+    morning_hook: "hook",
+    afternoon_hook: "hook"
+  };
+  targetState.fields.forEach((field) => {
+    if (field.id === "river" && field.label === "川") {
+      field.label = "川の名前";
+      changed = true;
+    }
+    if (field.sourceId === "rig" || field.id.endsWith("_rig")) {
+      if (field.visible !== false || !field.deprecated) changed = true;
+      field.visible = false;
+      field.deprecated = true;
+      field.order = field.order || 900;
+    }
+    if (comboFieldIds.has(field.id) && field.type !== "combo") {
+      field.type = "combo";
+      changed = true;
+    }
+    if (comboFieldIds.has(field.id) && !field.optionKey) {
+      field.optionKey = defaultOptionKeys[field.id] || field.id;
+      changed = true;
+    }
+  });
+  ["fishingCoop", "point", "underwaterLine", "hanakan", "hook"].forEach((key) => {
+    if (!Array.isArray(targetState.options[key])) {
+      targetState.options[key] = structuredClone(templateOptions[key] || []);
+      changed = true;
+    }
+  });
+  return changed;
 }
 
 function normalizeRecord(record) {
@@ -182,6 +231,7 @@ function normalizeRecord(record) {
     updatedAt: record.updatedAt || new Date().toISOString(),
     common: {
       date: record.date || "",
+      fishingCoop: "",
       river: record.river || "",
       point: record.point || "",
       weather: record.weather || "",
@@ -195,6 +245,9 @@ function normalizeRecord(record) {
       riverCondition: record.riverCondition || "",
       mossCondition: record.mossCondition || "",
       rod: record.rod || "",
+      underwaterLine: "",
+      hanakan: "",
+      hook: "",
       rig: record.rig || "",
       catchCount: record.catchCount || "",
       maxSize: record.maxSize || "",
@@ -215,7 +268,7 @@ function today() {
 
 function sectionFields(section, includeHidden = false) {
   return state.fields
-    .filter((field) => field.section === section && (includeHidden || field.visible))
+    .filter((field) => field.section === section && !field.deprecated && (includeHidden || field.visible))
     .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
 }
 
@@ -266,6 +319,14 @@ function buildForm(form, record, mode) {
     panel.className = `form-section ${key} ${activeTab[mode] === key ? "active" : ""}`;
     panel.dataset.sectionPanel = key;
     panel.innerHTML = `<h3>${section.label}</h3>`;
+    if (key === "afternoon") {
+      const copyButton = document.createElement("button");
+      copyButton.type = "button";
+      copyButton.className = "secondary-button copy-morning-button";
+      copyButton.dataset.copyMorning = "true";
+      copyButton.textContent = "午前と同じ";
+      panel.appendChild(copyButton);
+    }
     sectionFields(key).forEach((field) => panel.appendChild(createFieldControl(field, record, mode)));
     if (key !== "common") {
       const summary = document.createElement("p");
@@ -311,6 +372,12 @@ function createFieldControl(field, record, mode) {
     input.appendChild(new Option("選択してください", ""));
     (state.options[field.optionKey] || []).forEach((option) => input.appendChild(new Option(option, option)));
     input.value = value;
+  } else if (field.type === "combo") {
+    input = document.createElement("input");
+    input.type = "text";
+    input.value = value;
+    input.autocomplete = "off";
+    input.dataset.comboInput = field.optionKey;
   } else if (field.type === "multiselect") {
     input = document.createElement("select");
     input.multiple = true;
@@ -334,12 +401,39 @@ function createFieldControl(field, record, mode) {
     input.value = value;
     if (field.type === "number") input.inputMode = "decimal";
   }
+
   input.id = `${mode}-${field.id}`;
   input.name = inputName;
   input.required = !!field.required;
   input.dataset.fieldId = field.id;
   wrapper.appendChild(input);
+  if (field.type === "combo") wrapper.appendChild(createCandidateList(field, value));
   return wrapper;
+}
+
+function createCandidateList(field, value = "") {
+  const list = document.createElement("div");
+  list.className = "candidate-list";
+  list.dataset.candidatesFor = field.optionKey;
+  const options = filteredOptions(field.optionKey, value);
+  if (!options.length) {
+    list.innerHTML = '<span class="candidate-empty">候補なし</span>';
+    return list;
+  }
+  options.slice(0, 8).forEach((option) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "candidate-chip";
+    button.dataset.candidateValue = option;
+    button.textContent = option;
+    list.appendChild(button);
+  });
+  return list;
+}
+
+function filteredOptions(optionKey, query) {
+  const needle = String(query || "").trim().toLowerCase();
+  return [...new Set(state.options[optionKey] || [])].filter((option) => !needle || option.toLowerCase().includes(needle));
 }
 
 function collectForm(form, existing = {}) {
@@ -368,7 +462,7 @@ function showView(name) {
 function renderList() {
   const query = searchInput.value.trim().toLowerCase();
   const records = [...state.records]
-    .filter((record) => [record.common.river, record.common.point, record.common.commonMemo, record.morning.memo, record.afternoon.memo].join(" ").toLowerCase().includes(query))
+    .filter((record) => [record.common.fishingCoop, record.common.river, record.common.point, record.common.commonMemo, record.morning.memo, record.afternoon.memo].join(" ").toLowerCase().includes(query))
     .sort((a, b) => (b.common.date || "").localeCompare(a.common.date || ""));
   document.getElementById("recordCountText").textContent = `${records.length}件の記録`;
   recordList.innerHTML = "";
@@ -383,7 +477,7 @@ function renderList() {
       <div class="record-main" data-edit="${record.id}">
         <div>
           <div class="record-date">${escapeHtml(record.common.date || "日付なし")}</div>
-          <div class="record-river">${escapeHtml(record.common.river || "川未設定")} ${record.common.point ? `・${escapeHtml(record.common.point)}` : ""}</div>
+          <div class="record-river">${escapeHtml(record.common.fishingCoop || "漁協未設定")}・${escapeHtml(record.common.river || "川未設定")} ${record.common.point ? `・${escapeHtml(record.common.point)}` : ""}</div>
         </div>
         <div class="record-catch">合計 ${totalCatch(record)}匹</div>
       </div>
@@ -402,15 +496,43 @@ function renderList() {
 }
 
 function renderSettings() {
-  fieldSettings.innerHTML = `
-    <div class="setting-card">
-      <h3>入力項目</h3>
-      <div class="settings-actions">
-        <button class="secondary-button" type="button" id="exportSettingsButton">設定をJSONバックアップ</button>
-        <label class="file-import settings-import">設定をJSON復元<input id="importSettingsInput" type="file" accept="application/json,.json"></label>
-        <button class="secondary-button" type="button" id="importTemplateButton">初期設定から新しい項目だけ取り込む</button>
-        <button class="danger-button" type="button" id="resetSettingsButton">初期設定に戻す</button>
+  optionSettings.innerHTML = "";
+  if (settingPage === "top") {
+    fieldSettings.innerHTML = `
+      <div class="setting-card">
+        <h3>設定メニュー</h3>
+        <div class="setting-menu-grid">
+          <button class="secondary-button" type="button" data-setting-page="fields">入力項目の設定</button>
+          <button class="secondary-button" type="button" data-setting-page="options">選択肢の設定</button>
+          <button class="secondary-button" type="button" data-setting-page="app">バックアップ・初期化・アプリ設定</button>
+          <button class="primary-button" type="button" data-view-shortcut="list">記録一覧へ戻る</button>
+        </div>
       </div>
+    `;
+    return;
+  }
+  if (settingPage === "fields") renderFieldSettings();
+  if (settingPage === "options") renderOptionSettings();
+  if (settingPage === "app") renderAppSettings();
+}
+
+function settingsHeader(title) {
+  return `
+    <div class="setting-breadcrumb">
+      <strong>設定 ＞ ${title}</strong>
+      <div class="setting-nav-actions">
+        <button class="small-button" type="button" data-setting-page="top">設定トップに戻る</button>
+        <button class="secondary-button" type="button" data-view-shortcut="list">記録一覧へ戻る</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderFieldSettings() {
+  fieldSettings.innerHTML = `
+    ${settingsHeader(settingPages.fields)}
+    <div class="setting-card">
+      <h3>入力項目を追加</h3>
       <div class="field-add-grid">
         <input id="newFieldLabel" type="text" placeholder="表示名">
         <select id="newFieldSection">
@@ -423,40 +545,66 @@ function renderSettings() {
         </select>
         <button class="small-button" type="button" id="addFieldButton">項目追加</button>
       </div>
-      ${state.fields.map((field) => fieldRow(field)).join("")}
+    </div>
+    <div class="settings-stack">
+      ${state.fields.map((field) => fieldCard(field)).join("")}
     </div>
   `;
+}
 
-  optionSettings.innerHTML = optionSettingKeys().map((key) => `
-    <div class="setting-card" data-option-card="${key}">
-      <h3>${optionLabel(key)}の選択肢</h3>
-      <div class="option-list">
-        ${(state.options[key] || []).map((option, index) => optionRow(key, option, index)).join("")}
+function fieldCard(field) {
+  const isOpen = expandedFieldId === field.id;
+  return `
+    <div class="setting-card field-card" data-field-row="${field.id}">
+      <div class="field-card-head">
+        <div>
+          <h3>${escapeHtml(field.label)}</h3>
+          <p>${sections[field.section]?.label || field.section}・${typeLabels[field.type] || field.type}・${field.visible ? "表示" : "非表示"}・順番 ${Number(field.order || 0)}</p>
+        </div>
+        <button class="small-button" type="button" data-field-toggle="${field.id}">${isOpen ? "閉じる" : "編集"}</button>
       </div>
+      ${isOpen ? `
+        <div class="field-edit-grid">
+          <input type="text" value="${escapeAttribute(field.label)}" data-field-label="${field.id}" aria-label="表示名">
+          <select data-field-section="${field.id}" aria-label="区分">
+            ${Object.entries(sections).map(([key, section]) => `<option value="${key}" ${field.section === key ? "selected" : ""}>${section.label}</option>`).join("")}
+          </select>
+          <select data-field-type="${field.id}" aria-label="入力タイプ">
+            ${Object.entries(typeLabels).map(([key, label]) => `<option value="${key}" ${field.type === key ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+          <input type="number" value="${Number(field.order || 0)}" data-field-order="${field.id}" aria-label="並び順">
+          <label class="mini-check"><input type="checkbox" data-field-visible="${field.id}" ${field.visible ? "checked" : ""}>表示</label>
+          <label class="mini-check"><input type="checkbox" data-field-required="${field.id}" ${field.required ? "checked" : ""}>必須</label>
+          <button class="small-button" type="button" data-field-save="${field.id}">更新</button>
+          <button class="danger-button" type="button" data-field-hide="${field.id}">非表示</button>
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+function renderOptionSettings() {
+  fieldSettings.innerHTML = `
+    ${settingsHeader(settingPages.options)}
+    <div class="settings-stack">
+      ${optionSettingKeys().map((key) => optionCategory(key)).join("")}
+    </div>
+  `;
+}
+
+function optionCategory(key) {
+  const options = state.options[key] || [];
+  return `
+    <details class="setting-card option-category" ${["fishingCoop", "river", "point", "underwaterLine", "hanakan", "hook"].includes(key) ? "open" : ""}>
+      <summary>${escapeHtml(optionLabel(key))}の選択肢 <span>${options.length}件</span></summary>
       <div class="option-actions">
         <input type="text" placeholder="追加する選択肢" data-option-input="${key}">
         <button class="small-button" type="button" data-option-add="${key}">追加</button>
       </div>
-    </div>
-  `).join("");
-}
-
-function fieldRow(field) {
-  return `
-    <div class="field-row" data-field-row="${field.id}">
-      <input type="text" value="${escapeAttribute(field.label)}" data-field-label="${field.id}" aria-label="表示名">
-      <select data-field-section="${field.id}" aria-label="区分">
-        ${Object.entries(sections).map(([key, section]) => `<option value="${key}" ${field.section === key ? "selected" : ""}>${section.label}</option>`).join("")}
-      </select>
-      <select data-field-type="${field.id}" aria-label="入力タイプ">
-        ${Object.entries(typeLabels).map(([key, label]) => `<option value="${key}" ${field.type === key ? "selected" : ""}>${label}</option>`).join("")}
-      </select>
-      <input type="number" value="${Number(field.order || 0)}" data-field-order="${field.id}" aria-label="並び順">
-      <label class="mini-check"><input type="checkbox" data-field-visible="${field.id}" ${field.visible ? "checked" : ""}>表示</label>
-      <label class="mini-check"><input type="checkbox" data-field-required="${field.id}" ${field.required ? "checked" : ""}>必須</label>
-      <button class="small-button" type="button" data-field-save="${field.id}">更新</button>
-      <button class="danger-button" type="button" data-field-hide="${field.id}">非表示</button>
-    </div>
+      <div class="option-list">
+        ${options.map((option, index) => optionRow(key, option, index)).join("")}
+      </div>
+    </details>
   `;
 }
 
@@ -470,10 +618,31 @@ function optionRow(key, option, index) {
   `;
 }
 
+function renderAppSettings() {
+  fieldSettings.innerHTML = `
+    ${settingsHeader(settingPages.app)}
+    <div class="backup-panel">
+      <div class="backup-warning">
+        <strong>バックアップのお願い</strong>
+        <p>記録はスマホ内のIndexedDBに保存します。Chromeのブラウザデータ削除や端末故障に備えて、釣行後はJSONバックアップを保存してください。</p>
+      </div>
+      <button id="settingsExportCsvButton" class="primary-button" type="button">CSV出力</button>
+      <button id="settingsExportJsonButton" class="secondary-button" type="button">記録データのJSONバックアップ</button>
+      <label class="file-import">記録データのJSON復元<input id="settingsImportJsonInput" type="file" accept="application/json,.json"></label>
+      <button class="secondary-button" type="button" id="exportSettingsButton">設定をJSONバックアップ</button>
+      <label class="file-import">設定をJSON復元<input id="importSettingsInput" type="file" accept="application/json,.json"></label>
+      <button class="secondary-button" type="button" id="importTemplateButton">初期設定から新しい項目だけ取り込む</button>
+      <button class="danger-button" type="button" id="resetSettingsButton">初期設定に戻す</button>
+      <button class="danger-button" type="button" id="devResetButton">開発用リセット</button>
+      <p class="notice">PWAは一度オンラインで開くとオフラインでも起動できます。更新が反映されない場合は、オンラインで開き直してから再度ホーム画面アイコンで起動してください。</p>
+    </div>
+  `;
+}
+
 function optionSettingKeys() {
   const keys = new Set(Object.keys(templateOptions));
   state.fields.forEach((field) => {
-    if ((field.type === "select" || field.type === "multiselect") && field.optionKey) keys.add(field.optionKey);
+    if ((field.type === "select" || field.type === "multiselect" || field.type === "combo") && field.optionKey) keys.add(field.optionKey);
   });
   return Array.from(keys);
 }
@@ -521,14 +690,27 @@ function buildShareText(record) {
   appendShareSection(lines, "morning", record);
   lines.push("", "【午後】");
   appendShareSection(lines, "afternoon", record);
-  lines.push("", `合計釣果数：${totalCatch(record)}`);
+  lines.push("", `合計釣果：${totalCatch(record)}`);
+  const commonMemo = record.common?.commonMemo || "";
+  if (commonMemo || sectionFields("common").some((field) => (field.sourceId || field.id) === "commonMemo")) {
+    lines.push(`共通メモ：${commonMemo}`);
+  }
   return lines.join("\n");
 }
 
 function appendShareSection(lines, section, record) {
   sectionFields(section).forEach((field) => {
-    lines.push(`${field.label}：${formatValue(recordSectionValue(record, field))}`);
+    if (section === "common" && (field.sourceId || field.id) === "commonMemo") return;
+    lines.push(`${shareLabel(field)}：${formatValue(recordSectionValue(record, field))}`);
   });
+}
+
+function shareLabel(field) {
+  if (field.id === "date") return "日付";
+  if (field.id === "river") return "川";
+  if (field.id === "point") return "ポイント";
+  if (field.sourceId === "catchCount") return "釣果";
+  return field.label;
 }
 
 async function copyText(text) {
@@ -587,7 +769,7 @@ function exportFile(filename, content, type) {
 }
 
 function exportCsv() {
-  const fields = [...sectionFields("common", true), ...sectionFields("morning", true), ...sectionFields("afternoon", true)];
+  const fields = [...sectionFields("common"), ...sectionFields("morning"), ...sectionFields("afternoon")];
   const headers = fields.map((field) => `${sections[field.section].prefix}${field.label}`).concat("合計釣果数");
   const rows = [...state.records]
     .sort((a, b) => (b.common.date || "").localeCompare(a.common.date || ""))
@@ -612,6 +794,7 @@ function importJson(file) {
       if (!Array.isArray(imported.records) || !Array.isArray(imported.fields) || !imported.options) throw new Error("invalid");
       state = normalizeState(imported);
       mergeNewTemplateItems(state);
+      applySchemaRules(state);
       await saveState();
       buildForm(addForm, createEmptyRecord(), "add");
       showToast("JSONを復元しました");
@@ -636,6 +819,7 @@ function importSettings(file) {
       state.fields = imported.fields;
       state.options = imported.options;
       mergeNewTemplateItems(state);
+      applySchemaRules(state);
       await saveState();
       renderSettings();
       buildForm(addForm, createEmptyRecord(), "add");
@@ -647,8 +831,96 @@ function importSettings(file) {
   reader.readAsText(file);
 }
 
+async function importNewTemplateItems() {
+  const before = state.fields.length + Object.keys(state.options).length;
+  mergeNewTemplateItems(state);
+  applySchemaRules(state);
+  await saveState();
+  renderSettings();
+  buildForm(addForm, createEmptyRecord(), "add");
+  const after = state.fields.length + Object.keys(state.options).length;
+  showToast(after > before ? "新しい初期項目を取り込みました" : "追加できる新しい項目はありません");
+}
+
+async function resetSettingsToTemplates() {
+  if (!confirm("スマホで編集した項目や選択肢が初期状態に戻ります。実行しますか？")) return;
+  state.fields = structuredClone(templateFields);
+  state.options = structuredClone(templateOptions);
+  applySchemaRules(state);
+  await saveState();
+  renderSettings();
+  buildForm(addForm, createEmptyRecord(), "add");
+  showToast("初期設定に戻しました");
+}
+
+async function devReset() {
+  if (!confirm("開発用リセットです。記録と設定をすべて削除します。実行しますか？")) return;
+  if (!confirm("本当に削除しますか？この操作は元に戻せません。")) return;
+  state = makeDefaultState();
+  applySchemaRules(state);
+  await saveState();
+  renderSettings();
+  buildForm(addForm, createEmptyRecord(), "add");
+  showToast("開発用リセットを実行しました");
+}
+
 function formatValue(value) {
   return Array.isArray(value) ? value.join("、") : (value ?? "");
+}
+
+function cleanCandidate(value) {
+  return String(value || "").trim();
+}
+
+function hasOption(optionKey, value) {
+  const clean = cleanCandidate(value);
+  return (state.options[optionKey] || []).some((item) => item.trim().toLowerCase() === clean.toLowerCase());
+}
+
+function addOption(optionKey, value) {
+  const clean = cleanCandidate(value);
+  if (!clean || hasOption(optionKey, clean)) return false;
+  state.options[optionKey] = [...(state.options[optionKey] || []), clean];
+  return true;
+}
+
+async function askToAddNewCandidates(record) {
+  let changed = false;
+  for (const field of state.fields) {
+    if (field.type !== "combo" || !field.optionKey) continue;
+    const value = cleanCandidate(recordSectionValue(record, field));
+    if (!value || hasOption(field.optionKey, value)) continue;
+    if (confirm(`「${value}」を「${field.label}」の候補に追加しますか？`)) {
+      changed = addOption(field.optionKey, value) || changed;
+    }
+  }
+  return changed;
+}
+
+function copyMorningToAfternoon(form, mode) {
+  const record = collectForm(form, mode === "edit" ? getEditingRecord() || createEmptyRecord() : createEmptyRecord());
+  const afternoonFields = sectionFields("afternoon");
+  const hasAfternoonValue = afternoonFields.some((field) => {
+    const value = recordSectionValue(record, field);
+    return Array.isArray(value) ? value.length : String(value || "").trim();
+  });
+  if (hasAfternoonValue && !confirm("午後の入力内容を午前の内容で上書きします。実行しますか？")) return;
+  afternoonFields.forEach((afternoonField) => {
+    const morningField = state.fields.find((field) => field.section === "morning" && (field.sourceId || field.id) === (afternoonField.sourceId || afternoonField.id));
+    if (!morningField) return;
+    setRecordSectionValue(record, afternoonField, recordSectionValue(record, morningField));
+  });
+  activeTab[mode] = "afternoon";
+  buildForm(form, record, mode);
+  showToast("午前の内容を午後へコピーしました");
+}
+
+function refreshCandidateList(input) {
+  const fieldId = input.dataset.fieldId;
+  const field = state.fields.find((item) => item.id === fieldId);
+  const list = input.parentElement.querySelector(".candidate-list");
+  if (!field || !list) return;
+  list.replaceWith(createCandidateList(field, input.value));
 }
 
 function escapeHtml(value) {
@@ -672,42 +944,54 @@ function showToast(message) {
   showToast.timer = window.setTimeout(() => toast.classList.remove("show"), 2200);
 }
 
-function bindFormTabs(form, mode) {
+function bindFormBehavior(form, mode) {
   form.addEventListener("click", (event) => {
     const tab = event.target.dataset.formTab;
-    if (!tab) return;
-    activeTab[mode] = tab;
-    buildForm(form, collectForm(form, mode === "edit" ? getEditingRecord() || createEmptyRecord() : createEmptyRecord()), mode);
+    if (tab) {
+      activeTab[mode] = tab;
+      buildForm(form, collectForm(form, mode === "edit" ? getEditingRecord() || createEmptyRecord() : createEmptyRecord()), mode);
+      return;
+    }
+    if (event.target.dataset.copyMorning) copyMorningToAfternoon(form, mode);
+    if (event.target.dataset.candidateValue !== undefined) {
+      const input = event.target.closest(".form-field").querySelector("input[data-combo-input]");
+      input.value = event.target.dataset.candidateValue;
+      refreshCandidateList(input);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  });
+  form.addEventListener("input", (event) => {
+    if (event.target.dataset.comboInput) refreshCandidateList(event.target);
+    const record = collectForm(form, mode === "edit" ? getEditingRecord() || createEmptyRecord() : createEmptyRecord());
+    const total = form.querySelector(".total-strip");
+    if (total) total.textContent = `合計釣果：${totalCatch(record)}匹`;
   });
 }
 
-bindFormTabs(addForm, "add");
-bindFormTabs(editForm, "edit");
+bindFormBehavior(addForm, "add");
+bindFormBehavior(editForm, "edit");
 
 navButtons.forEach((button) => {
-  button.addEventListener("click", () => showView(button.dataset.view));
+  button.addEventListener("click", () => {
+    if (button.dataset.view === "settings") {
+      settingPage = "top";
+      expandedFieldId = "";
+    }
+    showView(button.dataset.view);
+  });
 });
 
 document.getElementById("quickAddButton").addEventListener("click", () => showView("add"));
 
-addForm.addEventListener("input", () => {
-  const record = collectForm(addForm, createEmptyRecord());
-  addForm.querySelector(".total-strip").textContent = `合計釣果：${totalCatch(record)}匹`;
-});
-
-editForm.addEventListener("input", () => {
-  const record = getEditingRecord();
-  if (record) editForm.querySelector(".total-strip").textContent = `合計釣果：${totalCatch(record)}匹`;
-});
-
 addForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const record = collectForm(addForm, createEmptyRecord());
+  const optionsChanged = await askToAddNewCandidates(record);
   state.records.push(record);
   await saveState();
   activeTab.add = "common";
   buildForm(addForm, createEmptyRecord(), "add");
-  showToast("記録を保存しました");
+  showToast(optionsChanged ? "記録と候補を保存しました" : "記録を保存しました");
   showView("list");
 });
 
@@ -715,9 +999,11 @@ editForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const index = state.records.findIndex((record) => record.id === editingId);
   if (index < 0) return;
-  state.records[index] = collectForm(editForm, state.records[index]);
+  const record = collectForm(editForm, state.records[index]);
+  const optionsChanged = await askToAddNewCandidates(record);
+  state.records[index] = record;
   await saveState();
-  showToast("変更を保存しました");
+  showToast(optionsChanged ? "変更と候補を保存しました" : "変更を保存しました");
   showView("list");
 });
 
@@ -738,16 +1024,35 @@ recordList.addEventListener("click", (event) => {
 searchInput.addEventListener("input", renderList);
 
 fieldSettings.addEventListener("click", async (event) => {
+  const pageTarget = event.target.dataset.settingPage;
+  if (pageTarget) {
+    settingPage = pageTarget;
+    expandedFieldId = "";
+    renderSettings();
+    return;
+  }
+  if (event.target.dataset.viewShortcut) {
+    showView(event.target.dataset.viewShortcut);
+    return;
+  }
+  if (event.target.id === "settingsExportCsvButton") return exportCsv();
+  if (event.target.id === "settingsExportJsonButton") return exportJson();
   if (event.target.id === "exportSettingsButton") return exportSettings();
   if (event.target.id === "importTemplateButton") return importNewTemplateItems();
   if (event.target.id === "resetSettingsButton") return resetSettingsToTemplates();
+  if (event.target.id === "devResetButton") return devReset();
+  if (event.target.dataset.fieldToggle) {
+    expandedFieldId = expandedFieldId === event.target.dataset.fieldToggle ? "" : event.target.dataset.fieldToggle;
+    renderSettings();
+    return;
+  }
   if (event.target.id === "addFieldButton") {
     const label = document.getElementById("newFieldLabel").value.trim();
     const section = document.getElementById("newFieldSection").value;
     const type = document.getElementById("newFieldType").value;
     if (!label) return;
     const id = `${section}_${Date.now()}`;
-    const optionKey = type === "select" || type === "multiselect" ? id : "";
+    const optionKey = ["select", "multiselect", "combo"].includes(type) ? id : "";
     state.fields.push({ id, label, type, optionKey, section, visible: true, order: Date.now(), required: false });
     if (optionKey) state.options[optionKey] = [];
     await saveState();
@@ -755,7 +1060,6 @@ fieldSettings.addEventListener("click", async (event) => {
     showToast("項目を追加しました");
     return;
   }
-
   const saveId = event.target.dataset.fieldSave;
   const hideId = event.target.dataset.fieldHide;
   if (!saveId && !hideId) return;
@@ -767,7 +1071,7 @@ fieldSettings.addEventListener("click", async (event) => {
     field.label = fieldSettings.querySelector(`[data-field-label="${id}"]`).value.trim() || field.label;
     field.section = fieldSettings.querySelector(`[data-field-section="${id}"]`).value;
     field.type = fieldSettings.querySelector(`[data-field-type="${id}"]`).value;
-    if ((field.type === "select" || field.type === "multiselect") && !field.optionKey) {
+    if (["select", "multiselect", "combo"].includes(field.type) && !field.optionKey) {
       field.optionKey = field.id;
       state.options[field.optionKey] ||= [];
     }
@@ -775,6 +1079,7 @@ fieldSettings.addEventListener("click", async (event) => {
     field.visible = fieldSettings.querySelector(`[data-field-visible="${id}"]`).checked;
     field.required = fieldSettings.querySelector(`[data-field-required="${id}"]`).checked;
   }
+  applySchemaRules(state);
   await saveState();
   renderSettings();
   buildForm(addForm, createEmptyRecord(), "add");
@@ -787,40 +1092,43 @@ fieldSettings.addEventListener("change", (event) => {
     if (file) importSettings(file);
     event.target.value = "";
   }
+  if (event.target.id === "settingsImportJsonInput") {
+    const [file] = event.target.files;
+    if (file && confirm("記録データをJSONから復元しますか？")) importJson(file);
+    event.target.value = "";
+  }
 });
 
-optionSettings.addEventListener("click", async (event) => {
+fieldSettings.addEventListener("click", async (event) => {
   const addKey = event.target.dataset.optionAdd;
   const saveKey = event.target.dataset.optionSave;
   const deleteKey = event.target.dataset.optionDelete;
+  if (!addKey && !saveKey && !deleteKey) return;
 
   if (addKey) {
-    const input = optionSettings.querySelector(`[data-option-input="${addKey}"]`);
-    const value = input.value.trim();
+    const input = fieldSettings.querySelector(`[data-option-input="${addKey}"]`);
+    const value = cleanCandidate(input.value);
     if (!value) return;
-    state.options[addKey] = [...(state.options[addKey] || []), value];
+    if (!addOption(addKey, value)) return showToast("同じ候補がすでにあります");
     input.value = "";
   }
-
   if (saveKey) {
     const index = Number(event.target.dataset.optionIndex);
-    const input = optionSettings.querySelector(`[data-option-edit="${saveKey}"][data-option-index="${index}"]`);
-    const value = input.value.trim();
+    const input = fieldSettings.querySelector(`[data-option-edit="${saveKey}"][data-option-index="${index}"]`);
+    const value = cleanCandidate(input.value);
     if (!value) return;
+    const duplicate = (state.options[saveKey] || []).some((item, itemIndex) => itemIndex !== index && item.trim().toLowerCase() === value.toLowerCase());
+    if (duplicate) return showToast("同じ候補がすでにあります");
     state.options[saveKey][index] = value;
   }
-
   if (deleteKey) {
     const index = Number(event.target.dataset.optionIndex);
     state.options[deleteKey].splice(index, 1);
   }
-
-  if (addKey || saveKey || deleteKey) {
-    await saveState();
-    renderSettings();
-    buildForm(addForm, createEmptyRecord(), "add");
-    showToast("選択肢を保存しました");
-  }
+  await saveState();
+  renderSettings();
+  buildForm(addForm, createEmptyRecord(), "add");
+  showToast("選択肢を保存しました");
 });
 
 document.getElementById("exportCsvButton").addEventListener("click", exportCsv);

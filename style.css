@@ -194,6 +194,31 @@ h3 {
   text-align: center;
 }
 
+.copy-morning-button {
+  width: 100%;
+}
+
+.candidate-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.candidate-chip {
+  min-height: 38px;
+  border: 1px solid #b9dcd0;
+  border-radius: 999px;
+  background: #f7fffb;
+  color: var(--accent-dark);
+  padding: 7px 12px;
+  font-weight: 800;
+}
+
+.candidate-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .form-field {
   display: grid;
   gap: 7px;
@@ -383,7 +408,10 @@ button:focus-visible {
 
 .field-add-grid,
 .field-row,
-.settings-actions {
+.settings-actions,
+.setting-menu-grid,
+.setting-nav-actions,
+.field-edit-grid {
   display: grid;
   gap: 8px;
 }
@@ -398,6 +426,57 @@ button:focus-visible {
   align-items: center;
   padding: 10px 0;
   border-top: 1px solid var(--line);
+}
+
+.setting-breadcrumb {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.setting-breadcrumb strong {
+  font-size: 18px;
+}
+
+.setting-menu-grid .primary-button,
+.setting-menu-grid .secondary-button,
+.settings-actions .primary-button,
+.settings-actions .secondary-button,
+.settings-actions .danger-button {
+  width: 100%;
+}
+
+.field-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field-card-head h3 {
+  margin-bottom: 4px;
+}
+
+.field-card-head p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.field-edit-grid {
+  margin-top: 12px;
+}
+
+.option-category summary {
+  cursor: pointer;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.option-category summary span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .field-row input,
@@ -535,6 +614,19 @@ button:focus-visible {
 
   .settings-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .setting-menu-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .setting-nav-actions {
+    grid-template-columns: auto auto;
+    justify-content: start;
+  }
+
+  .field-edit-grid {
+    grid-template-columns: 1.3fr 120px 150px 82px 80px 80px auto auto;
   }
 
   .field-row {
