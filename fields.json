@@ -17,8 +17,8 @@
   { "id": "morning_hanakan", "sourceId": "hanakan", "label": "ハナカン", "type": "combo", "optionKey": "hanakan", "section": "morning", "visible": true, "order": 80, "required": false },
   { "id": "morning_hook", "sourceId": "hook", "label": "針", "type": "combo", "optionKey": "hook", "section": "morning", "visible": true, "order": 90, "required": false },
   { "id": "morning_rig", "sourceId": "rig", "label": "使用しかけ", "type": "multiselect", "optionKey": "rig", "section": "morning", "visible": false, "order": 900, "required": false, "deprecated": true },
-  { "id": "morning_catchCount", "sourceId": "catchCount", "label": "釣果", "type": "number", "unit": "匹", "optionKey": "", "section": "morning", "visible": true, "order": 100, "required": false },
-  { "id": "morning_maxSize", "sourceId": "maxSize", "label": "最大サイズ", "type": "number", "unit": "cm", "optionKey": "", "section": "morning", "visible": true, "order": 110, "required": false },
+  { "id": "morning_maxSize", "sourceId": "maxSize", "label": "最大サイズ", "type": "number", "unit": "cm", "optionKey": "", "section": "morning", "visible": true, "order": 100, "required": false },
+  { "id": "morning_catchCount", "sourceId": "catchCount", "label": "釣果", "type": "number", "unit": "匹", "optionKey": "", "section": "morning", "visible": true, "order": 110, "required": false },
   { "id": "morning_memo", "sourceId": "memo", "label": "メモ", "type": "textarea", "optionKey": "", "section": "morning", "visible": true, "order": 120, "required": false },
 
   { "id": "afternoon_waterTemp", "sourceId": "waterTemp", "label": "水温", "type": "number", "unit": "℃", "optionKey": "", "section": "afternoon", "visible": true, "order": 10, "required": false },
@@ -31,7 +31,7 @@
   { "id": "afternoon_hanakan", "sourceId": "hanakan", "label": "ハナカン", "type": "combo", "optionKey": "hanakan", "section": "afternoon", "visible": true, "order": 80, "required": false },
   { "id": "afternoon_hook", "sourceId": "hook", "label": "針", "type": "combo", "optionKey": "hook", "section": "afternoon", "visible": true, "order": 90, "required": false },
   { "id": "afternoon_rig", "sourceId": "rig", "label": "使用しかけ", "type": "multiselect", "optionKey": "rig", "section": "afternoon", "visible": false, "order": 900, "required": false, "deprecated": true },
-  { "id": "afternoon_catchCount", "sourceId": "catchCount", "label": "釣果", "type": "number", "unit": "匹", "optionKey": "", "section": "afternoon", "visible": true, "order": 100, "required": false },
-  { "id": "afternoon_maxSize", "sourceId": "maxSize", "label": "最大サイズ", "type": "number", "unit": "cm", "optionKey": "", "section": "afternoon", "visible": true, "order": 110, "required": false },
+  { "id": "afternoon_maxSize", "sourceId": "maxSize", "label": "最大サイズ", "type": "number", "unit": "cm", "optionKey": "", "section": "afternoon", "visible": true, "order": 100, "required": false },
+  { "id": "afternoon_catchCount", "sourceId": "catchCount", "label": "釣果", "type": "number", "unit": "匹", "optionKey": "", "section": "afternoon", "visible": true, "order": 110, "required": false },
   { "id": "afternoon_memo", "sourceId": "memo", "label": "メモ", "type": "textarea", "optionKey": "", "section": "afternoon", "visible": true, "order": 120, "required": false }
 ]

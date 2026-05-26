@@ -184,6 +184,15 @@ function applySchemaRules(targetState) {
     morning_hook: "hook",
     afternoon_hook: "hook"
   };
+  const fixedSessionOrders = {
+    rod: 60,
+    underwaterLine: 70,
+    hanakan: 80,
+    hook: 90,
+    maxSize: 100,
+    catchCount: 110,
+    memo: 120
+  };
   targetState.fields.forEach((field) => {
     if (field.id === "river" && field.label === "川") {
       field.label = "川の名前";
@@ -202,6 +211,13 @@ function applySchemaRules(targetState) {
     if (comboFieldIds.has(field.id) && !field.optionKey) {
       field.optionKey = defaultOptionKeys[field.id] || field.id;
       changed = true;
+    }
+    if ((field.section === "morning" || field.section === "afternoon") && Object.hasOwn(fixedSessionOrders, field.sourceId)) {
+      const nextOrder = fixedSessionOrders[field.sourceId];
+      if (field.order !== nextOrder) {
+        field.order = nextOrder;
+        changed = true;
+      }
     }
   });
   ["fishingCoop", "point", "underwaterLine", "hanakan", "hook"].forEach((key) => {
