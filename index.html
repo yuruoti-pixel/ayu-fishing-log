@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f766e">
+  <meta name="theme-color" content="#4b9f99">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="鮎釣り記録">
   <title>鮎釣り記録</title>
@@ -23,7 +23,16 @@
     </header>
 
     <main>
-      <section class="view active" id="view-add" aria-labelledby="addTitle">
+      <section class="view active" id="view-home" aria-labelledby="homeTitle">
+        <div class="section-heading">
+          <h2 id="homeTitle">TOP</h2>
+          <p>月ごとの釣行記録をカレンダーで確認できます。</p>
+        </div>
+        <div id="calendarPanel" class="calendar-panel"></div>
+        <div id="dayRecordPanel" class="day-record-panel"></div>
+      </section>
+
+      <section class="view" id="view-add" aria-labelledby="addTitle">
         <div class="section-heading">
           <h2 id="addTitle">記録追加</h2>
           <p>共通情報、午前、午後を1件の釣行記録として保存します。</p>
@@ -37,9 +46,20 @@
           <p id="recordCountText">0件の記録</p>
         </div>
         <div class="list-actions">
-          <input id="searchInput" type="search" placeholder="川・ポイント・メモで検索">
+          <input id="searchInput" type="search" placeholder="河川・ポイント・メモで検索">
         </div>
         <div id="recordList" class="record-list"></div>
+      </section>
+
+      <section class="view" id="view-search" aria-labelledby="searchTitle">
+        <div class="section-heading">
+          <h2 id="searchTitle">検索</h2>
+          <p>条件で絞り込み、釣果と道具別ベスト3を確認できます。</p>
+        </div>
+        <form id="searchForm" class="search-panel"></form>
+        <div id="searchSummary" class="summary-grid"></div>
+        <div id="searchResults" class="record-list"></div>
+        <div id="bestPanel" class="best-panel"></div>
       </section>
 
       <section class="view" id="view-edit" aria-labelledby="editTitle">
@@ -64,31 +84,22 @@
           <h2 id="backupTitle">バックアップ</h2>
           <p>CSV出力、JSON保存、JSON復元ができます。</p>
         </div>
-        <div class="backup-panel">
-          <div class="backup-warning">
-            <strong>バックアップのお願い</strong>
-            <p>記録はスマホ内のIndexedDBに保存します。圏外でも使えますが、Chromeのブラウザデータを削除すると記録が消える可能性があります。釣行後はJSONバックアップを保存してください。</p>
-          </div>
-          <button id="exportCsvButton" class="primary-button" type="button">CSV出力</button>
-          <button id="exportJsonButton" class="secondary-button" type="button">JSONバックアップ出力</button>
-          <label class="file-import">
-            JSONから復元
-            <input id="importJsonInput" type="file" accept="application/json,.json">
-          </label>
-          <p class="notice">復元すると、現在の記録と設定は読み込んだバックアップ内容に置き換わります。</p>
-        </div>
+        <div id="backupContent" class="backup-panel"></div>
       </section>
     </main>
 
     <nav class="bottom-nav" aria-label="画面切り替え">
-      <button class="nav-button active" data-view="add" type="button"><span>＋</span>追加</button>
+      <button class="nav-button" data-view="add" type="button"><span>＋</span>追加</button>
+      <button class="nav-button active" data-view="home" type="button"><span>□</span>TOP</button>
       <button class="nav-button" data-view="list" type="button"><span>☰</span>一覧</button>
+      <button class="nav-button" data-view="search" type="button"><span>⌕</span>検索</button>
       <button class="nav-button" data-view="settings" type="button"><span>⚙</span>設定</button>
-      <button class="nav-button" data-view="backup" type="button"><span>⇩</span>保存</button>
+      <button class="nav-button" data-view="backup" type="button"><span>⇩</span>バックアップ</button>
     </nav>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="actionSheet" class="action-sheet" aria-hidden="true"></div>
   <script src="script.js" charset="utf-8"></script>
 </body>
 </html>

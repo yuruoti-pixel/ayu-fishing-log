@@ -30,7 +30,8 @@ const settingPages = {
 const comboFieldIds = new Set([
   "fishingCoop",
   "river",
-  "point",
+  "morning_point",
+  "afternoon_point",
   "morning_rod",
   "afternoon_rod",
   "morning_underwaterLine",
@@ -49,16 +50,27 @@ let editingId = null;
 let activeTab = { add: "common", edit: "common" };
 let settingPage = "top";
 let expandedFieldId = "";
+let calendarCursor = new Date();
+let searchDetailsOpen = false;
+let backupPage = "top";
 
 const views = document.querySelectorAll(".view");
 const navButtons = document.querySelectorAll(".nav-button");
 const addForm = document.getElementById("addForm");
 const editForm = document.getElementById("editForm");
 const recordList = document.getElementById("recordList");
+const calendarPanel = document.getElementById("calendarPanel");
+const dayRecordPanel = document.getElementById("dayRecordPanel");
+const searchForm = document.getElementById("searchForm");
+const searchSummary = document.getElementById("searchSummary");
+const searchResults = document.getElementById("searchResults");
+const bestPanel = document.getElementById("bestPanel");
+const backupContent = document.getElementById("backupContent");
 const fieldSettings = document.getElementById("fieldSettings");
 const optionSettings = document.getElementById("optionSettings");
 const searchInput = document.getElementById("searchInput");
 const toast = document.getElementById("toast");
+const actionSheet = document.getElementById("actionSheet");
 
 async function loadInitialTemplates() {
   const [fieldsRes, optionsRes] = await Promise.all([
@@ -72,7 +84,7 @@ async function loadInitialTemplates() {
 
 function makeDefaultState() {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     fields: structuredClone(templateFields),
     options: structuredClone(templateOptions),
     records: []
@@ -144,7 +156,7 @@ function loadLegacyState() {
 function normalizeState(raw) {
   const fallback = makeDefaultState();
   return {
-    schemaVersion: 4,
+    schemaVersion: Number(raw.schemaVersion || 1),
     fields: Array.isArray(raw.fields) ? raw.fields : fallback.fields,
     options: { ...fallback.options, ...(raw.options || {}) },
     records: Array.isArray(raw.records) ? raw.records.map(normalizeRecord) : []
@@ -171,10 +183,12 @@ function mergeNewTemplateItems(targetState) {
 
 function applySchemaRules(targetState) {
   let changed = false;
+  const previousVersion = Number(targetState.schemaVersion || 1);
   const defaultOptionKeys = {
     fishingCoop: "fishingCoop",
     river: "river",
-    point: "point",
+    morning_point: "point",
+    afternoon_point: "point",
     morning_rod: "rod",
     afternoon_rod: "rod",
     morning_underwaterLine: "underwaterLine",
@@ -185,18 +199,37 @@ function applySchemaRules(targetState) {
     afternoon_hook: "hook"
   };
   const fixedSessionOrders = {
-    rod: 60,
-    underwaterLine: 70,
-    hanakan: 80,
-    hook: 90,
-    maxSize: 100,
-    catchCount: 110,
-    memo: 120
+    startTime: 10,
+    point: 20,
+    waterTemp: 30,
+    waterLevel: 40,
+    waterClarity: 50,
+    riverCondition: 60,
+    mossCondition: 70,
+    rod: 80,
+    underwaterLine: 90,
+    hanakan: 100,
+    hook: 110,
+    catchCount: 120,
+    maxSize: 130,
+    memo: 140
   };
   targetState.fields.forEach((field) => {
-    if (field.id === "river" && field.label === "川") {
-      field.label = "川の名前";
+    if (field.id === "river" && field.label !== "河川") {
+      field.label = "河川";
       changed = true;
+    }
+    if (field.id === "fishingCoop" && previousVersion < 5 && field.visible !== false) {
+      field.visible = false;
+      changed = true;
+    }
+    if (field.id === "point") {
+      if (field.visible !== false || !field.deprecated || field.section !== "common") changed = true;
+      field.visible = false;
+      field.deprecated = true;
+      field.section = "common";
+      field.label = "ポイント名";
+      field.order = 900;
     }
     if (field.sourceId === "rig" || field.id.endsWith("_rig")) {
       if (field.visible !== false || !field.deprecated) changed = true;
@@ -220,24 +253,32 @@ function applySchemaRules(targetState) {
       }
     }
   });
-  ["fishingCoop", "point", "underwaterLine", "hanakan", "hook"].forEach((key) => {
+  ["fishingCoop", "point", "underwaterLine", "hanakan", "hook", "morningStartTime", "afternoonStartTime"].forEach((key) => {
     if (!Array.isArray(targetState.options[key])) {
       targetState.options[key] = structuredClone(templateOptions[key] || []);
       changed = true;
     }
   });
+  if (targetState.schemaVersion !== 5) {
+    targetState.schemaVersion = 5;
+    changed = true;
+  }
   return changed;
 }
 
 function normalizeRecord(record) {
   if (record.common || record.morning || record.afternoon) {
+    const common = { ...(record.common || {}) };
+    const morning = { ...(record.morning || {}) };
+    const afternoon = { ...(record.afternoon || {}) };
+    if (common.point && !morning.point) morning.point = common.point;
     return {
       id: record.id || crypto.randomUUID(),
       createdAt: record.createdAt || new Date().toISOString(),
       updatedAt: record.updatedAt || new Date().toISOString(),
-      common: { ...(record.common || {}) },
-      morning: { ...(record.morning || {}) },
-      afternoon: { ...(record.afternoon || {}) },
+      common,
+      morning,
+      afternoon,
       archivedValues: { ...(record.archivedValues || {}) }
     };
   }
@@ -256,6 +297,8 @@ function normalizeRecord(record) {
     },
     morning: {
       waterTemp: record.waterTemp || "",
+      startTime: "",
+      point: record.point || "",
       waterLevel: record.waterLevel || "",
       waterClarity: record.waterClarity || "",
       riverCondition: record.riverCondition || "",
@@ -286,6 +329,13 @@ function sectionFields(section, includeHidden = false) {
   return state.fields
     .filter((field) => field.section === section && !field.deprecated && (includeHidden || field.visible))
     .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+}
+
+function exportFields() {
+  const common = state.fields
+    .filter((field) => field.section === "common" && !field.deprecated && (field.visible || field.id === "fishingCoop"))
+    .sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+  return [...common, ...sectionFields("morning"), ...sectionFields("afternoon")];
 }
 
 function recordSectionValue(record, field) {
@@ -359,15 +409,12 @@ function buildForm(form, record, mode) {
   form.appendChild(total);
 
   const actions = document.createElement("div");
-  actions.className = "form-actions";
+  actions.className = `form-actions ${mode === "edit" ? "edit-actions" : "add-actions"}`;
   actions.innerHTML = mode === "add"
     ? '<button class="primary-button" type="submit">記録を保存</button>'
     : [
       '<button class="primary-button" type="submit">変更を保存</button>',
-      '<button class="secondary-button" id="shareRecordButton" type="button">共有</button>',
-      '<button class="secondary-button" id="lineShareButton" type="button">LINEへ送る</button>',
-      '<button class="secondary-button" id="copyShareButton" type="button">コピー</button>',
-      '<button class="danger-button" id="deleteEditingButton" type="button">削除</button>'
+      '<button class="secondary-button" id="moreActionsButton" type="button">その他の操作</button>'
     ].join("");
   form.appendChild(actions);
 }
@@ -470,15 +517,18 @@ function collectForm(form, existing = {}) {
 function showView(name) {
   views.forEach((view) => view.classList.toggle("active", view.id === `view-${name}`));
   navButtons.forEach((button) => button.classList.toggle("active", button.dataset.view === name));
+  if (name === "home") renderCalendar();
   if (name === "add") buildForm(addForm, createEmptyRecord(), "add");
   if (name === "list") renderList();
+  if (name === "search") renderSearch();
   if (name === "settings") renderSettings();
+  if (name === "backup") renderBackup();
 }
 
 function renderList() {
   const query = searchInput.value.trim().toLowerCase();
   const records = [...state.records]
-    .filter((record) => [record.common.fishingCoop, record.common.river, record.common.point, record.common.commonMemo, record.morning.memo, record.afternoon.memo].join(" ").toLowerCase().includes(query))
+    .filter((record) => [record.common.fishingCoop, record.common.river, record.morning.point, record.afternoon.point, record.common.point, record.common.commonMemo, record.morning.memo, record.afternoon.memo].join(" ").toLowerCase().includes(query))
     .sort((a, b) => (b.common.date || "").localeCompare(a.common.date || ""));
   document.getElementById("recordCountText").textContent = `${records.length}件の記録`;
   recordList.innerHTML = "";
@@ -493,7 +543,7 @@ function renderList() {
       <div class="record-main" data-edit="${record.id}">
         <div>
           <div class="record-date">${escapeHtml(record.common.date || "日付なし")}</div>
-          <div class="record-river">${escapeHtml(record.common.fishingCoop || "漁協未設定")}・${escapeHtml(record.common.river || "川未設定")} ${record.common.point ? `・${escapeHtml(record.common.point)}` : ""}</div>
+          <div class="record-river">${escapeHtml(record.common.river || "河川未設定")} ${recordPoints(record) ? `・${escapeHtml(recordPoints(record))}` : ""}</div>
         </div>
         <div class="record-catch">合計 ${totalCatch(record)}匹</div>
       </div>
@@ -509,6 +559,294 @@ function renderList() {
     `;
     recordList.appendChild(card);
   });
+}
+
+function renderCalendar() {
+  const year = calendarCursor.getFullYear();
+  const month = calendarCursor.getMonth();
+  const monthRecords = state.records.filter((record) => {
+    const date = record.common?.date || "";
+    return date.startsWith(`${year}-${String(month + 1).padStart(2, "0")}`);
+  });
+  const daysWithRecords = new Set(monthRecords.map((record) => record.common.date));
+  const first = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const blanks = first.getDay();
+  const cells = [];
+  for (let i = 0; i < blanks; i++) cells.push('<div class="calendar-cell muted"></div>');
+  for (let day = 1; day <= lastDay; day++) {
+    const date = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    cells.push(`
+      <button class="calendar-cell" type="button" data-calendar-date="${date}">
+        <span>${day}</span>
+        ${daysWithRecords.has(date) ? '<small>●</small>' : ""}
+      </button>
+    `);
+  }
+  calendarPanel.innerHTML = `
+    <div class="calendar-toolbar">
+      <button class="small-button" type="button" data-calendar-move="-1">前月</button>
+      <div class="month-picker">
+        <input id="calendarYear" type="number" value="${year}" min="2000" max="2100">
+        <select id="calendarMonth">
+          ${Array.from({ length: 12 }, (_, index) => `<option value="${index}" ${index === month ? "selected" : ""}>${index + 1}月</option>`).join("")}
+        </select>
+      </div>
+      <button class="small-button" type="button" data-calendar-move="1">翌月</button>
+    </div>
+    <div class="calendar-weekdays">${["日", "月", "火", "水", "木", "金", "土"].map((d) => `<span>${d}</span>`).join("")}</div>
+    <div class="calendar-grid">${cells.join("")}</div>
+  `;
+  renderDayRecords(today());
+}
+
+function renderDayRecords(date) {
+  const records = state.records.filter((record) => record.common?.date === date);
+  dayRecordPanel.innerHTML = `
+    <h3>${date.replaceAll("-", "/")} の記録</h3>
+    ${records.length ? records.map(dayRecordCard).join("") : '<p class="empty-state">この日の記録はありません。</p>'}
+  `;
+}
+
+function dayRecordCard(record) {
+  return `
+    <article class="record-card">
+      <div class="record-main">
+        <div>
+          <div class="record-river">河川：${escapeHtml(record.common?.river || "未設定")}</div>
+          <div class="record-meta"><span>天気：${escapeHtml(record.common?.weather || "未設定")}</span><span>ポイント：${escapeHtml(recordPoints(record) || "未設定")}</span></div>
+        </div>
+        <div class="record-catch">合計：${totalCatch(record)}匹</div>
+      </div>
+      <div class="record-meta"><span>午前釣果：${sessionCatch(record, "morning")}匹</span><span>午後釣果：${sessionCatch(record, "afternoon")}匹</span></div>
+      <div class="card-actions"><button class="secondary-button" type="button" data-edit="${record.id}">編集</button></div>
+    </article>
+  `;
+}
+
+function renderSearch() {
+  searchForm.innerHTML = `
+    <div class="search-card">
+      <h3>基本条件</h3>
+      <div class="search-grid basic-search-grid">
+        <label>開始日<input name="startDate" type="date"></label>
+        <label>終了日<input name="endDate" type="date"></label>
+        <label>月<input name="month" type="month"></label>
+        <label>河川<input name="river" type="text" list="riverList"></label>
+        <label>ポイント名<input name="point" type="text" list="pointList"></label>
+      </div>
+      <div class="search-actions">
+        <button class="primary-button" type="submit">検索する</button>
+        <button class="secondary-button" type="button" id="clearSearchButton">条件をクリア</button>
+        <button class="secondary-button" type="button" id="toggleDetailSearchButton">${searchDetailsOpen ? "詳細条件を閉じる" : "詳細条件を開く"}</button>
+      </div>
+    </div>
+    <div class="search-card detail-search ${searchDetailsOpen ? "open" : ""}" id="detailSearchPanel">
+      <h3>詳細条件</h3>
+      <div class="search-grid detail-search-grid">
+        <label>天気<select name="weather"><option value="">すべて</option>${optionChoices("weather")}</select></label>
+        <label>水濁り<select name="waterClarity"><option value="">すべて</option>${optionChoices("waterClarity")}</select></label>
+        <label>川の状態<select name="riverCondition"><option value="">すべて</option>${optionChoices("riverCondition")}</select></label>
+        <label>苔<select name="mossCondition"><option value="">すべて</option>${optionChoices("mossCondition")}</select></label>
+        <div class="range-field">
+          <span>気温</span>
+          <input name="airMin" type="number" inputmode="decimal" placeholder="下限">
+          <span>〜</span>
+          <input name="airMax" type="number" inputmode="decimal" placeholder="上限">
+          <span>℃</span>
+        </div>
+        <div class="range-field">
+          <span>水温</span>
+          <input name="waterMin" type="number" inputmode="decimal" placeholder="下限">
+          <span>〜</span>
+          <input name="waterMax" type="number" inputmode="decimal" placeholder="上限">
+          <span>℃</span>
+        </div>
+      </div>
+    </div>
+    <datalist id="riverList">${(state.options.river || []).map((v) => `<option value="${escapeAttribute(v)}">`).join("")}</datalist>
+    <datalist id="pointList">${(state.options.point || []).map((v) => `<option value="${escapeAttribute(v)}">`).join("")}</datalist>
+  `;
+  renderSearchResults(state.records);
+}
+
+function optionChoices(key) {
+  return (state.options[key] || []).map((value) => `<option value="${escapeAttribute(value)}">${escapeHtml(value)}</option>`).join("");
+}
+
+function currentSearchConditions() {
+  return Object.fromEntries(new FormData(searchForm).entries());
+}
+
+function searchFilteredRecords() {
+  const c = currentSearchConditions();
+  return state.records.filter((record) => {
+    const date = record.common?.date || "";
+    if (c.startDate && date < c.startDate) return false;
+    if (c.endDate && date > c.endDate) return false;
+    if (c.month && !date.startsWith(c.month)) return false;
+    if (c.river && !String(record.common?.river || "").includes(c.river.trim())) return false;
+    if (c.point && !recordPoints(record).includes(c.point.trim())) return false;
+    if (c.weather && record.common?.weather !== c.weather) return false;
+    if (!inRange(record.common?.airTemp, c.airMin, c.airMax)) return false;
+    if (!sessionMatchesRange(record, "waterTemp", c.waterMin, c.waterMax)) return false;
+    if (c.waterClarity && !sessionHas(record, "waterClarity", c.waterClarity)) return false;
+    if (c.riverCondition && !sessionHas(record, "riverCondition", c.riverCondition)) return false;
+    if (c.mossCondition && !sessionHas(record, "mossCondition", c.mossCondition)) return false;
+    return true;
+  });
+}
+
+function inRange(value, min, max) {
+  if (min === "" && max === "") return true;
+  const num = Number(value);
+  if (Number.isNaN(num)) return false;
+  if (min !== "" && num < Number(min)) return false;
+  if (max !== "" && num > Number(max)) return false;
+  return true;
+}
+
+function sessionMatchesRange(record, key, min, max) {
+  if (min === "" && max === "") return true;
+  return ["morning", "afternoon"].some((section) => inRange(record[section]?.[key], min, max));
+}
+
+function sessionHas(record, key, value) {
+  return ["morning", "afternoon"].some((section) => record[section]?.[key] === value);
+}
+
+function renderSearchResults(records) {
+  const total = records.reduce((sum, record) => sum + totalCatch(record), 0);
+  const morningTotal = records.reduce((sum, record) => sum + sessionCatch(record, "morning"), 0);
+  const afternoonTotal = records.reduce((sum, record) => sum + sessionCatch(record, "afternoon"), 0);
+  const days = fishingDays(records);
+  searchSummary.innerHTML = `<h3 class="panel-title">集計</h3>` + [
+    ["釣行日数", `${days}日`],
+    ["合計釣果", `${total}匹`],
+    ["平均釣果", `${days ? (total / days).toFixed(1) : "0.0"}匹`],
+    ["午前合計", `${morningTotal}匹`],
+    ["午後合計", `${afternoonTotal}匹`]
+  ].map(([label, value]) => `<div class="summary-card"><span>${label}</span><strong>${value}</strong></div>`).join("");
+  searchResults.innerHTML = `<h3 class="panel-title">検索結果</h3>` + (records.length ? records.map(searchResultCard).join("") : '<p class="empty-state">該当する記録がありません。</p>');
+  bestPanel.innerHTML = `<h3 class="panel-title">ベスト3</h3>${renderBestPanel(records)}`;
+}
+
+function searchResultCard(record) {
+  return `
+    <article class="record-card">
+      <div class="record-main">
+        <div>
+          <div class="record-date">${escapeHtml(record.common?.date || "日付なし")}</div>
+          <div class="record-river">河川：${escapeHtml(record.common?.river || "未設定")}</div>
+          <div class="record-meta"><span>ポイント：${escapeHtml(recordPoints(record) || "未設定")}</span><span>天気：${escapeHtml(record.common?.weather || "未設定")}</span></div>
+        </div>
+        <div class="record-catch">合計 ${totalCatch(record)}匹</div>
+      </div>
+      <div class="record-meta"><span>午前釣果：${sessionCatch(record, "morning")}匹</span><span>午後釣果：${sessionCatch(record, "afternoon")}匹</span></div>
+      <div class="card-actions"><button class="secondary-button" type="button" data-edit="${record.id}">編集</button></div>
+    </article>
+  `;
+}
+
+function renderBestPanel(records) {
+  return ["rod", "underwaterLine", "hook"].map((key) => {
+    const label = { rod: "使用竿", underwaterLine: "水中糸", hook: "針" }[key];
+    const ranks = toolRanking(records, key);
+    return `
+      <section class="best-card">
+        <h3>${label} ベスト3</h3>
+        ${ranks.length ? ranks.map((rank, index) => `<p>${index + 1}位　${escapeHtml(rank.name)}　平均${rank.average.toFixed(1)}匹　使用日数${rank.days}日　合計${rank.total}匹</p>`).join("") : '<p>対象データがありません。</p>'}
+      </section>
+    `;
+  }).join("");
+}
+
+function renderBackup() {
+  if (backupPage === "top") {
+    backupContent.innerHTML = `
+      <div class="backup-warning">
+        <strong>バックアップのお願い</strong>
+        <p>記録はスマホ内のIndexedDBに保存します。Chromeのブラウザデータ削除や端末故障に備えて、釣行後はJSONバックアップを保存してください。</p>
+      </div>
+      <div class="backup-menu-grid">
+        <button class="backup-menu-card" type="button" data-backup-page="save">
+          <strong>保存する</strong>
+          <span>CSVやJSONバックアップをスマホに保存します。</span>
+        </button>
+        <button class="backup-menu-card" type="button" data-backup-page="share">
+          <strong>共有する</strong>
+          <span>CSVやJSONバックアップをLINE、Google Drive、メールなどへ送ります。</span>
+        </button>
+        <button class="backup-menu-card danger-menu" type="button" data-backup-page="restore">
+          <strong>復元する</strong>
+          <span>JSONバックアップから記録を戻します。</span>
+        </button>
+      </div>
+    `;
+    return;
+  }
+  if (backupPage === "save") {
+    backupContent.innerHTML = `
+      <div class="backup-subhead">
+        <h3>保存する</h3>
+        <button class="small-button" type="button" data-backup-page="top">バックアップメニューへ戻る</button>
+      </div>
+      <p class="notice">CSVはExcelや一覧確認・集計用です。JSONバックアップはアプリに復元するための完全バックアップです。</p>
+      <button id="exportCsvButton" class="primary-button" type="button">CSVを保存</button>
+      <button id="exportJsonButton" class="secondary-button" type="button">JSONバックアップを保存</button>
+    `;
+    return;
+  }
+  if (backupPage === "share") {
+    backupContent.innerHTML = `
+      <div class="backup-subhead">
+        <h3>共有する</h3>
+        <button class="small-button" type="button" data-backup-page="top">バックアップメニューへ戻る</button>
+      </div>
+      <p class="notice">CSVファイルや復元用JSONバックアップをLINE、Google Drive、メールなどへ送ります。LINE送信は一時共有向きです。長期保管はGoogle Drive、パソコン、NASなどをおすすめします。</p>
+      <button id="shareCsvButton" class="primary-button" type="button">CSVを共有</button>
+      <button id="shareJsonButton" class="secondary-button" type="button">JSONバックアップを共有</button>
+    `;
+    return;
+  }
+  backupContent.innerHTML = `
+    <div class="backup-subhead">
+      <h3>復元する</h3>
+      <button class="small-button" type="button" data-backup-page="top">バックアップメニューへ戻る</button>
+    </div>
+    <div class="backup-warning danger-warning">
+      <strong>復元前の注意</strong>
+      <p>JSONバックアップから復元すると、現在の記録や設定がバックアップ内容に置き換わる場合があります。復元前に必要なデータを保存してください。</p>
+    </div>
+    <label class="file-import">
+      JSONから復元
+      <input id="importJsonInput" type="file" accept="application/json,.json">
+    </label>
+  `;
+}
+
+function confirmAndImportJson(file) {
+  if (!confirm("JSONバックアップから復元します。現在のデータが置き換わる可能性があります。実行しますか？")) return;
+  importJson(file);
+}
+
+function toolRanking(records, key) {
+  const map = new Map();
+  records.forEach((record) => {
+    ["morning", "afternoon"].forEach((section) => {
+      const name = record[section]?.[key];
+      if (!name) return;
+      const catchCount = sessionCatch(record, section);
+      if (!map.has(name)) map.set(name, { name, total: 0, dates: new Set() });
+      const item = map.get(name);
+      item.total += catchCount;
+      if (record.common?.date) item.dates.add(record.common.date);
+    });
+  });
+  return [...map.values()]
+    .map((item) => ({ name: item.name, total: item.total, days: item.dates.size, average: item.dates.size ? item.total / item.dates.size : 0 }))
+    .sort((a, b) => b.average - a.average)
+    .slice(0, 3);
 }
 
 function renderSettings() {
@@ -642,8 +980,11 @@ function renderAppSettings() {
         <strong>バックアップのお願い</strong>
         <p>記録はスマホ内のIndexedDBに保存します。Chromeのブラウザデータ削除や端末故障に備えて、釣行後はJSONバックアップを保存してください。</p>
       </div>
-      <button id="settingsExportCsvButton" class="primary-button" type="button">CSV出力</button>
-      <button id="settingsExportJsonButton" class="secondary-button" type="button">記録データのJSONバックアップ</button>
+      <p class="notice">CSVは閲覧・集計用、JSONは復元用です。LINE送信は一時共有向きなので、長期保管はGoogle Drive、パソコン、NASなどをおすすめします。</p>
+      <button id="settingsExportCsvButton" class="primary-button" type="button">CSVを保存</button>
+      <button id="settingsShareCsvButton" class="secondary-button" type="button">CSVを共有</button>
+      <button id="settingsExportJsonButton" class="secondary-button" type="button">JSONバックアップを保存</button>
+      <button id="settingsShareJsonButton" class="secondary-button" type="button">JSONバックアップを共有</button>
       <label class="file-import">記録データのJSON復元<input id="settingsImportJsonInput" type="file" accept="application/json,.json"></label>
       <button class="secondary-button" type="button" id="exportSettingsButton">設定をJSONバックアップ</button>
       <label class="file-import">設定をJSON復元<input id="importSettingsInput" type="file" accept="application/json,.json"></label>
@@ -693,6 +1034,14 @@ function totalCatch(record) {
   return sessionCatch(record, "morning") + sessionCatch(record, "afternoon");
 }
 
+function recordPoints(record) {
+  return [...new Set([record?.morning?.point, record?.afternoon?.point, record?.common?.point].filter(Boolean))].join(" / ");
+}
+
+function fishingDays(records) {
+  return new Set(records.map((record) => record.common?.date).filter(Boolean)).size;
+}
+
 function getEditingRecord() {
   if (!editingId) return null;
   const base = state.records.find((record) => record.id === editingId);
@@ -701,7 +1050,7 @@ function getEditingRecord() {
 
 function buildShareText(record) {
   const lines = ["【鮎釣り記録】"];
-  appendShareSection(lines, "common", record);
+  appendShareSection(lines, "common", record, true);
   lines.push("", "【午前】");
   appendShareSection(lines, "morning", record);
   lines.push("", "【午後】");
@@ -714,17 +1063,22 @@ function buildShareText(record) {
   return lines.join("\n");
 }
 
-function appendShareSection(lines, section, record) {
-  sectionFields(section).forEach((field) => {
+function appendShareSection(lines, section, record, includeFishingCoop = false) {
+  const fields = section === "common" && includeFishingCoop
+    ? state.fields.filter((field) => field.section === "common" && !field.deprecated && (field.visible || field.id === "fishingCoop")).sort((a, b) => Number(a.order || 0) - Number(b.order || 0))
+    : sectionFields(section);
+  fields.forEach((field) => {
     if (section === "common" && (field.sourceId || field.id) === "commonMemo") return;
+    if (field.id === "fishingCoop" && !record.common?.fishingCoop && !field.visible) return;
     lines.push(`${shareLabel(field)}：${formatValue(recordSectionValue(record, field))}`);
   });
 }
 
 function shareLabel(field) {
   if (field.id === "date") return "日付";
-  if (field.id === "river") return "川";
+  if (field.id === "river") return "河川";
   if (field.id === "point") return "ポイント";
+  if (field.sourceId === "point") return "ポイント";
   if (field.sourceId === "catchCount") return "釣果";
   return field.label;
 }
@@ -767,6 +1121,27 @@ function lineShareCurrentRecord() {
   location.href = `https://line.me/R/share?text=${encodeURIComponent(buildShareText(record))}`;
 }
 
+function openActionSheet() {
+  actionSheet.innerHTML = `
+    <div class="action-sheet-backdrop" data-close-actions="true"></div>
+    <div class="action-sheet-panel">
+      <h3>その他の操作</h3>
+      <button class="secondary-button" id="shareRecordButton" type="button">共有</button>
+      <button class="secondary-button" id="lineShareButton" type="button">LINEへ送る</button>
+      <button class="secondary-button" id="copyShareButton" type="button">コピー</button>
+      <button class="danger-button" id="deleteEditingButton" type="button">削除</button>
+      <button class="small-button" type="button" data-close-actions="true">閉じる</button>
+    </div>
+  `;
+  actionSheet.classList.add("show");
+  actionSheet.setAttribute("aria-hidden", "false");
+}
+
+function closeActionSheet() {
+  actionSheet.classList.remove("show");
+  actionSheet.setAttribute("aria-hidden", "true");
+}
+
 async function copyCurrentRecord() {
   const record = getEditingRecord();
   if (!record) return;
@@ -785,13 +1160,45 @@ function exportFile(filename, content, type) {
 }
 
 function exportCsv() {
-  const fields = [...sectionFields("common"), ...sectionFields("morning"), ...sectionFields("afternoon")];
+  const fields = exportFields();
   const headers = fields.map((field) => `${sections[field.section].prefix}${field.label}`).concat("合計釣果数");
   const rows = [...state.records]
     .sort((a, b) => (b.common.date || "").localeCompare(a.common.date || ""))
     .map((record) => fields.map((field) => formatValue(recordSectionValue(record, field))).concat(totalCatch(record)));
   const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
   exportFile(`ayu-log-${today()}.csv`, `\ufeff${csv}`, "text/csv;charset=utf-8");
+}
+
+function buildCsvBlob() {
+  const fields = exportFields();
+  const headers = fields.map((field) => `${sections[field.section].prefix}${field.label}`).concat("合計釣果数");
+  const rows = [...state.records]
+    .sort((a, b) => (b.common.date || "").localeCompare(a.common.date || ""))
+    .map((record) => fields.map((field) => formatValue(recordSectionValue(record, field))).concat(totalCatch(record)));
+  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
+  return new Blob([`\ufeff${csv}`], { type: "text/csv;charset=utf-8" });
+}
+
+function buildJsonBlob() {
+  return new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+}
+
+async function shareBlob(blob, filename, title) {
+  const file = new File([blob], filename, { type: blob.type });
+  if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+    await navigator.share({ title, files: [file] });
+    return;
+  }
+  showToast("この端末ではファイル共有に対応していません。保存ボタンを使ってください");
+}
+
+function saveBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function csvCell(value) {
@@ -917,11 +1324,13 @@ function copyMorningToAfternoon(form, mode) {
   const record = collectForm(form, mode === "edit" ? getEditingRecord() || createEmptyRecord() : createEmptyRecord());
   const afternoonFields = sectionFields("afternoon");
   const hasAfternoonValue = afternoonFields.some((field) => {
+    if ((field.sourceId || field.id) === "startTime") return false;
     const value = recordSectionValue(record, field);
     return Array.isArray(value) ? value.length : String(value || "").trim();
   });
   if (hasAfternoonValue && !confirm("午後の入力内容を午前の内容で上書きします。実行しますか？")) return;
   afternoonFields.forEach((afternoonField) => {
+    if ((afternoonField.sourceId || afternoonField.id) === "startTime") return;
     const morningField = state.fields.find((field) => field.section === "morning" && (field.sourceId || field.id) === (afternoonField.sourceId || afternoonField.id));
     if (!morningField) return;
     setRecordSectionValue(record, afternoonField, recordSectionValue(record, morningField));
@@ -999,6 +1408,27 @@ navButtons.forEach((button) => {
 
 document.getElementById("quickAddButton").addEventListener("click", () => showView("add"));
 
+backupContent.addEventListener("click", (event) => {
+  const nextPage = event.target.closest("[data-backup-page]")?.dataset.backupPage;
+  if (nextPage) {
+    backupPage = nextPage;
+    renderBackup();
+    return;
+  }
+  if (event.target.id === "exportCsvButton") exportCsv();
+  if (event.target.id === "shareCsvButton") shareBlob(buildCsvBlob(), `ayu-log-${today()}.csv`, "鮎釣りCSV");
+  if (event.target.id === "exportJsonButton") exportJson();
+  if (event.target.id === "shareJsonButton") shareBlob(buildJsonBlob(), `ayu-log-backup-${today()}.json`, "鮎釣りJSONバックアップ");
+});
+
+backupContent.addEventListener("change", (event) => {
+  if (event.target.id === "importJsonInput") {
+    const [file] = event.target.files;
+    if (file) confirmAndImportJson(file);
+    event.target.value = "";
+  }
+});
+
 addForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const record = collectForm(addForm, createEmptyRecord());
@@ -1024,10 +1454,16 @@ editForm.addEventListener("submit", async (event) => {
 });
 
 editForm.addEventListener("click", (event) => {
+  if (event.target.id === "moreActionsButton") openActionSheet();
+});
+
+actionSheet.addEventListener("click", (event) => {
+  if (event.target.dataset.closeActions) return closeActionSheet();
   if (event.target.id === "deleteEditingButton") deleteRecord(editingId);
   if (event.target.id === "shareRecordButton") shareCurrentRecord();
   if (event.target.id === "lineShareButton") lineShareCurrentRecord();
   if (event.target.id === "copyShareButton") copyCurrentRecord();
+  if (event.target.closest("button")) closeActionSheet();
 });
 
 recordList.addEventListener("click", (event) => {
@@ -1038,6 +1474,60 @@ recordList.addEventListener("click", (event) => {
 });
 
 searchInput.addEventListener("input", renderList);
+
+calendarPanel.addEventListener("click", (event) => {
+  const move = event.target.dataset.calendarMove;
+  if (move) {
+    calendarCursor = new Date(calendarCursor.getFullYear(), calendarCursor.getMonth() + Number(move), 1);
+    renderCalendar();
+    return;
+  }
+  const date = event.target.closest("[data-calendar-date]")?.dataset.calendarDate;
+  if (date) renderDayRecords(date);
+});
+
+calendarPanel.addEventListener("change", (event) => {
+  if (event.target.id === "calendarYear" || event.target.id === "calendarMonth") {
+    const year = Number(document.getElementById("calendarYear").value);
+    const month = Number(document.getElementById("calendarMonth").value);
+    calendarCursor = new Date(year, month, 1);
+    renderCalendar();
+  }
+});
+
+dayRecordPanel.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-edit]");
+  if (target) openEdit(target.dataset.edit);
+});
+
+searchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  renderSearchResults(searchFilteredRecords());
+});
+
+searchForm.addEventListener("change", () => renderSearchResults(searchFilteredRecords()));
+
+searchForm.addEventListener("click", (event) => {
+  if (event.target.id === "toggleDetailSearchButton") {
+    searchDetailsOpen = !searchDetailsOpen;
+    const current = currentSearchConditions();
+    renderSearch();
+    Object.entries(current).forEach(([key, value]) => {
+      const input = searchForm.elements[key];
+      if (input) input.value = value;
+    });
+    renderSearchResults(searchFilteredRecords());
+  }
+  if (event.target.id === "clearSearchButton") {
+    searchForm.reset();
+    renderSearchResults(state.records);
+  }
+});
+
+searchResults.addEventListener("click", (event) => {
+  const target = event.target.closest("[data-edit]");
+  if (target) openEdit(target.dataset.edit);
+});
 
 fieldSettings.addEventListener("click", async (event) => {
   const pageTarget = event.target.dataset.settingPage;
@@ -1052,7 +1542,9 @@ fieldSettings.addEventListener("click", async (event) => {
     return;
   }
   if (event.target.id === "settingsExportCsvButton") return exportCsv();
+  if (event.target.id === "settingsShareCsvButton") return shareBlob(buildCsvBlob(), `ayu-log-${today()}.csv`, "鮎釣りCSV");
   if (event.target.id === "settingsExportJsonButton") return exportJson();
+  if (event.target.id === "settingsShareJsonButton") return shareBlob(buildJsonBlob(), `ayu-log-backup-${today()}.json`, "鮎釣りJSONバックアップ");
   if (event.target.id === "exportSettingsButton") return exportSettings();
   if (event.target.id === "importTemplateButton") return importNewTemplateItems();
   if (event.target.id === "resetSettingsButton") return resetSettingsToTemplates();
@@ -1147,14 +1639,6 @@ fieldSettings.addEventListener("click", async (event) => {
   showToast("選択肢を保存しました");
 });
 
-document.getElementById("exportCsvButton").addEventListener("click", exportCsv);
-document.getElementById("exportJsonButton").addEventListener("click", exportJson);
-document.getElementById("importJsonInput").addEventListener("change", (event) => {
-  const [file] = event.target.files;
-  if (file && confirm("JSONバックアップから復元しますか？")) importJson(file);
-  event.target.value = "";
-});
-
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("sw.js").catch(() => {});
@@ -1167,6 +1651,7 @@ if ("serviceWorker" in navigator) {
     db = await openDatabase();
     state = await loadState();
     buildForm(addForm, createEmptyRecord(), "add");
+    renderCalendar();
   } catch (error) {
     document.body.innerHTML = '<main class="view active"><div class="section-heading"><h2>起動できません</h2><p>初期設定またはIndexedDBを読み込めません。HTTP/HTTPSで開いているか確認してください。</p></div></main>';
   }
