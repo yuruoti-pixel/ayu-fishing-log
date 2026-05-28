@@ -1003,22 +1003,10 @@ function renderBackup() {
   `;
 }
 
-function openRestoreFileInput(kind) {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.className = "restore-file-input";
-  input.accept = kind === "zip"
-    ? ".zip,application/zip,application/x-zip-compressed,application/octet-stream,*/*"
-    : ".json,application/json,text/json,text/plain,*/*";
-  input.addEventListener("change", () => {
-    const [file] = input.files || [];
-    if (file) {
-      if (kind === "zip") importPhotoZip(file);
-      else confirmAndImportJson(file);
-    }
-    input.remove();
-  }, { once: true });
-  document.body.appendChild(input);
+function openRestoreFileInput(inputId) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.value = "";
   input.click();
 }
 
@@ -1941,11 +1929,20 @@ backupContent.addEventListener("click", (event) => {
   if (button.id === "shareJsonButton") shareBlob(buildJsonBlob(), `ayu-log-backup-${today()}.json`, "鮎釣りJSONバックアップ");
   if (button.id === "exportPhotoZipButton") savePhotoZip();
   if (button.id === "sharePhotoZipButton") sharePhotoZip();
-  if (button.id === "chooseJsonRestoreButton") openRestoreFileInput("json");
-  if (button.id === "choosePhotoZipRestoreButton") openRestoreFileInput("zip");
+  if (button.id === "chooseJsonRestoreButton") openRestoreFileInput("jsonRestoreInput");
+  if (button.id === "choosePhotoZipRestoreButton") openRestoreFileInput("photoZipRestoreInput");
 });
 
-backupContent.addEventListener("change", (event) => {
+document.getElementById("jsonRestoreInput").addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  if (file) confirmAndImportJson(file);
+  event.target.value = "";
+});
+
+document.getElementById("photoZipRestoreInput").addEventListener("change", (event) => {
+  const [file] = event.target.files;
+  if (file) importPhotoZip(file);
+  event.target.value = "";
 });
 
 addForm.addEventListener("submit", async (event) => {
