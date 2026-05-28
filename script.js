@@ -560,8 +560,10 @@ function createPhotoPicker(field, value = [], mode) {
     <p class="photo-note">写真はアプリ内に圧縮コピーとして保存されます。スマホ容量を使用します。大事な写真は通常の写真アプリやバックアップにも残してください。</p>
     <div class="photo-thumbs" data-photo-thumbs="${field.id}">${ids.length ? "" : '<span class="photo-empty">写真はまだありません</span>'}</div>
     <div class="photo-actions">
-      <button class="secondary-button" type="button" data-photo-add="${field.id}">写真を追加</button>
+      <button class="secondary-button" type="button" data-photo-select="${field.id}">写真を選択</button>
+      <button class="secondary-button" type="button" data-photo-capture="${field.id}">カメラで撮影</button>
       <input class="photo-input" type="file" accept="image/*" multiple data-photo-input="${field.id}">
+      <input class="photo-input" type="file" accept="image/*" capture="environment" data-photo-camera-input="${field.id}">
     </div>
   `;
   renderPhotoThumbs(box, ids);
@@ -1557,8 +1559,23 @@ function bindFormBehavior(form, mode) {
       return;
     }
     if (event.target.dataset.copyMorning) copyMorningToAfternoon(form, mode);
-    if (event.target.dataset.photoAdd) {
-      form.querySelector(`[data-photo-input="${event.target.dataset.photoAdd}"]`)?.click();
+    if (event.target.dataset.photoSelect) {
+      form.querySelector(`[data-photo-input="${event.target.dataset.photoSelect}"]`)?.click();
+      return;
+    }
+    if (event.target.dataset.photoCapture) {
+      const ids = photoIdsFromInput(form);
+      if (ids.length >= MAX_RECORD_PHOTOS) {
+        showToast("写真は最大5枚までです");
+        return;
+      }
+      const cameraInput = form.querySelector(`[data-photo-camera-input="${event.target.dataset.photoCapture}"]`);
+      if (!cameraInput) {
+        showToast("この端末ではカメラ起動に対応していない可能性があります。写真を選択してください。");
+        form.querySelector(`[data-photo-input="${event.target.dataset.photoCapture}"]`)?.click();
+        return;
+      }
+      cameraInput.click();
       return;
     }
     if (event.target.dataset.photoDelete) {
@@ -1583,7 +1600,7 @@ function bindFormBehavior(form, mode) {
     if (total) total.textContent = `合計釣果：${totalCatch(record)}匹`;
   });
   form.addEventListener("change", (event) => {
-    if (event.target.dataset.photoInput) {
+    if (event.target.dataset.photoInput || event.target.dataset.photoCameraInput) {
       addPhotosToForm(form, event.target.files);
       event.target.value = "";
     }
