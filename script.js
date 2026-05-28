@@ -980,7 +980,7 @@ function renderBackup() {
         <h3>共有する</h3>
         <button class="small-button" type="button" data-backup-page="top">バックアップメニューへ戻る</button>
       </div>
-      <p class="notice">LINE、メール、Google Driveなどへ送れます。長期保管はGoogle Drive、パソコン、NASなどがおすすめです。</p>
+      <p class="notice">LINE、メール、Google Driveなどへ送れます。直接共有できない端末では、ファイルを保存してから共有してください。</p>
       <button id="shareCsvButton" class="primary-button" type="button">CSVを共有</button>
       <button id="shareJsonButton" class="secondary-button" type="button">JSONバックアップを共有</button>
       <button id="sharePhotoZipButton" class="secondary-button" type="button">写真付きバックアップZIPを共有</button>
@@ -1526,7 +1526,7 @@ async function sharePhotoZip() {
       blob,
       filename,
       "鮎釣り写真付きバックアップ",
-      "この端末ではファイル共有に対応していない可能性があります。ZIPを保存してから、LINE、メール、Google Driveなどで共有してください。"
+      "この端末では直接共有できないため、ファイルを保存しました。保存後は、スマホのダウンロードまたはFilesアプリからファイルを選んで共有してください。"
     );
   } catch {
     showToast("写真付きバックアップの共有に失敗しました");
@@ -1534,25 +1534,32 @@ async function sharePhotoZip() {
 }
 
 async function shareBlob(blob, filename, title) {
-  await shareFile(blob, filename, title, "この端末ではファイル共有に対応していない可能性があります。ファイルを保存してから、LINE、メール、Google Driveなどで共有してください。");
+  await shareFile(blob, filename, title, "この端末では直接共有できないため、ファイルを保存しました。保存後は、スマホのダウンロードまたはFilesアプリからファイルを選んで共有してください。");
 }
 
 async function shareFile(blob, filename, title, fallbackMessage) {
   const file = new File([blob], filename, { type: blob.type || "application/octet-stream" });
+  const saveFallback = () => {
+    saveBlob(filename, blob);
+    showToast(fallbackMessage);
+  };
   try {
     if (!navigator.share) {
-      showToast(fallbackMessage);
+      saveFallback();
       return;
     }
     if (navigator.canShare && !navigator.canShare({ files: [file] })) {
-      showToast(fallbackMessage);
+      saveFallback();
       return;
     }
     await navigator.share({ title, text: filename, files: [file] });
     showToast("共有画面を開きました");
   } catch (error) {
-    if (error.name === "AbortError") return;
-    showToast(fallbackMessage);
+    if (error.name === "AbortError") {
+      showToast("共有をキャンセルしました。");
+      return;
+    }
+    saveFallback();
   }
 }
 
