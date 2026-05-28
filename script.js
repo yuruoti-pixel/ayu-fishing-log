@@ -757,6 +757,7 @@ function renderCalendar() {
       </button>
     `);
   }
+  while (cells.length < 42) cells.push('<div class="calendar-cell muted"></div>');
   calendarPanel.innerHTML = `
     <div class="calendar-toolbar">
       <button class="small-button" type="button" data-calendar-move="-1">前月</button>
@@ -965,7 +966,7 @@ function renderBackup() {
         <h3>保存する</h3>
         <button class="small-button" type="button" data-backup-page="top">バックアップメニューへ戻る</button>
       </div>
-      <p class="notice">CSVはExcelや一覧確認・集計用です。JSONバックアップはアプリに復元するための完全バックアップです。</p>
+      <p class="notice">ファイルをこのスマホに保存します。CSVはExcelや一覧確認・集計用です。JSONバックアップはアプリに復元するためのバックアップです。</p>
       <button id="exportCsvButton" class="primary-button" type="button">CSVを保存</button>
       <button id="exportJsonButton" class="secondary-button" type="button">JSONバックアップを保存</button>
       <button id="exportPhotoZipButton" class="secondary-button" type="button">写真付きバックアップZIPを保存</button>
@@ -979,7 +980,7 @@ function renderBackup() {
         <h3>共有する</h3>
         <button class="small-button" type="button" data-backup-page="top">バックアップメニューへ戻る</button>
       </div>
-      <p class="notice">CSVファイルや復元用JSONバックアップをLINE、Google Drive、メールなどへ送ります。LINE送信は一時共有向きです。長期保管はGoogle Drive、パソコン、NASなどをおすすめします。</p>
+      <p class="notice">LINE、メール、Google Driveなどへ送れます。長期保管はGoogle Drive、パソコン、NASなどがおすすめです。</p>
       <button id="shareCsvButton" class="primary-button" type="button">CSVを共有</button>
       <button id="shareJsonButton" class="secondary-button" type="button">JSONバックアップを共有</button>
       <button id="sharePhotoZipButton" class="secondary-button" type="button">写真付きバックアップZIPを共有</button>
@@ -1502,11 +1503,11 @@ async function sharePhotoZip() {
   try {
     const filename = photoZipFilename();
     const blob = await buildPhotoZipBlob();
-    await shareFileOrSave(
+    await shareFile(
       blob,
       filename,
       "鮎釣り写真付きバックアップ",
-      "この端末ではZIP共有に対応していない可能性があります。ZIPを保存しました。"
+      "この端末ではファイル共有に対応していない可能性があります。ZIPを保存してから、LINE、メール、Google Driveなどで共有してください。"
     );
   } catch {
     showToast("写真付きバックアップの共有に失敗しました");
@@ -1514,21 +1515,26 @@ async function sharePhotoZip() {
 }
 
 async function shareBlob(blob, filename, title) {
-  await shareFileOrSave(blob, filename, title, "この端末ではファイル共有に対応していない可能性があります。ファイルを保存しました。");
+  await shareFile(blob, filename, title, "この端末ではファイル共有に対応していない可能性があります。ファイルを保存してから、LINE、メール、Google Driveなどで共有してください。");
 }
 
-async function shareFileOrSave(blob, filename, title, fallbackMessage) {
+async function shareFile(blob, filename, title, fallbackMessage) {
   const file = new File([blob], filename, { type: blob.type || "application/octet-stream" });
   try {
-    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
-      await navigator.share({ title, files: [file] });
+    if (!navigator.share) {
+      showToast(fallbackMessage);
       return;
     }
+    if (navigator.canShare && !navigator.canShare({ files: [file] })) {
+      showToast(fallbackMessage);
+      return;
+    }
+    await navigator.share({ title, text: filename, files: [file] });
+    showToast("共有画面を開きました");
   } catch (error) {
     if (error.name === "AbortError") return;
+    showToast(fallbackMessage);
   }
-  saveBlob(filename, blob);
-  showToast(fallbackMessage);
 }
 
 function saveBlob(filename, blob) {
