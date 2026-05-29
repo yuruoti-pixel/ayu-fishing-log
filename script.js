@@ -63,6 +63,7 @@ const navButtons = document.querySelectorAll(".nav-button");
 const addForm = document.getElementById("addForm");
 const editForm = document.getElementById("editForm");
 const recordList = document.getElementById("recordList");
+const photoList = document.getElementById("photoList");
 const calendarPanel = document.getElementById("calendarPanel");
 const dayRecordPanel = document.getElementById("dayRecordPanel");
 const searchForm = document.getElementById("searchForm");
@@ -694,6 +695,7 @@ function showView(name) {
   if (name === "home") renderCalendar();
   if (name === "add") buildForm(addForm, createEmptyRecord(), "add");
   if (name === "list") renderList();
+  if (name === "photos") renderPhotoList();
   if (name === "search") renderSearch();
   if (name === "settings") renderSettings();
   if (name === "backup") renderBackup();
@@ -733,6 +735,54 @@ function renderList() {
     `;
     recordList.appendChild(card);
   });
+}
+
+async function renderPhotoList() {
+  const records = [...state.records]
+    .filter((record) => (record.common?.photoIds || []).length)
+    .sort((a, b) => (b.common?.date || "").localeCompare(a.common?.date || ""));
+  photoList.innerHTML = "";
+  if (!records.length) {
+    photoList.innerHTML = '<p class="empty-state">写真付きの記録はありません。</p>';
+    return;
+  }
+  for (const record of records) {
+    const card = document.createElement("article");
+    card.className = "photo-record-card";
+    const thumbs = document.createElement("div");
+    thumbs.className = "photo-list-thumbs";
+    for (const id of record.common.photoIds || []) {
+      const photo = await readPhoto(id);
+      if (!photo?.blob) continue;
+      const url = URL.createObjectURL(photo.blob);
+      const thumb = document.createElement("button");
+      thumb.className = "photo-list-thumb";
+      thumb.type = "button";
+      thumb.dataset.photoView = id;
+      thumb.innerHTML = `<img src="${url}" alt="釣行写真">`;
+      thumbs.appendChild(thumb);
+    }
+    if (!thumbs.children.length) continue;
+    card.innerHTML = `
+      <div class="photo-record-head">
+        <strong>${escapeHtml(formatDateDisplay(record.common?.date || "日付なし"))}</strong>
+        <span>${escapeHtml(record.common?.river || "河川未設定")}</span>
+      </div>
+    `;
+    card.appendChild(thumbs);
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+    actions.innerHTML = `<button class="secondary-button" type="button" data-photo-record="${record.id}">記録を見る</button>`;
+    card.appendChild(actions);
+    photoList.appendChild(card);
+  }
+  if (!photoList.children.length) {
+    photoList.innerHTML = '<p class="empty-state">写真付きの記録はありません。</p>';
+  }
+}
+
+function formatDateDisplay(date) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.replaceAll("-", "/") : date;
 }
 
 function renderCalendar() {
@@ -2040,6 +2090,16 @@ recordList.addEventListener("click", (event) => {
   if (!target) return;
   if (target.dataset.edit) openEdit(target.dataset.edit);
   if (target.dataset.delete) deleteRecord(target.dataset.delete);
+});
+
+photoList.addEventListener("click", (event) => {
+  const photoTarget = event.target.closest("[data-photo-view]");
+  if (photoTarget) {
+    openPhotoViewer(photoTarget.dataset.photoView);
+    return;
+  }
+  const recordTarget = event.target.closest("[data-photo-record]");
+  if (recordTarget) openEdit(recordTarget.dataset.photoRecord);
 });
 
 searchInput.addEventListener("input", renderList);
